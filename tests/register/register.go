@@ -41,6 +41,7 @@ type Test struct {
 	Board          *string
 	UseLocalFile   bool
 	UseLocalServer bool
+	OEM            *string
 
 	// used in negative tests to allow them to
 	// provide a regexp to validate the output
@@ -149,6 +150,10 @@ func (test Test) GetInstallOptions(t *testing.T, loopDevice string, opts ...stri
 
 	if test.Board != nil {
 		opts = append(opts, "-B", *test.Board)
+	}
+
+	if test.OEM != nil {
+		opts = append(opts, "-o", *test.OEM)
 	}
 
 	if test.IgnitionConfig != nil {
@@ -278,6 +283,31 @@ func (test Test) ValidatePartitionTableWiped(t *testing.T, diskFile string) {
 	}
 }
 
+func (test Test) ValidateOEM(t *testing.T, rootDir string) {
+	// for some OEMs the name used in the grub.cfg differs from the image name
+	var expectedOEM string
+	switch *test.OEM {
+	case "ami":
+		expectedOEM = "ec2"
+	case "vmware_raw":
+		expectedOEM = "vmware"
+	case "xen":
+		// the xen oem only produces additional xl style cfg files
+		return
+	default:
+		expectedOEM = *test.OEM
+	}
+
+	data, err := ioutil.ReadFile(filepath.Join(rootDir, "usr", "share", "oem", "grub.cfg"))
+	if err != nil {
+		t.Fatalf("reading /usr/share/oem/grub.cfg: %v", err)
+	}
+
+	if expectedOEM != util.RegexpSearch(t, "oem", "oem_id=\"(.*)\"", data) {
+		t.Fatalf("expected oem differs: expected %s, received %s", expectedOEM, data)
+	}
+}
+
 func (test Test) DefaultChecks(t *testing.T, rootDir string) {
 	test.ValidateOSRelease(t, rootDir)
 
@@ -291,6 +321,10 @@ func (test Test) DefaultChecks(t *testing.T, rootDir string) {
 
 	if test.Channel != nil {
 		test.ValidateChannel(t, rootDir)
+	}
+
+	if test.OEM != nil {
+		test.ValidateOEM(t, rootDir)
 	}
 }
 
