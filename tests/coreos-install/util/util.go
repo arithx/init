@@ -28,6 +28,15 @@ import (
 	"testing"
 )
 
+func TryRegexpSearch(name, pattern string, data []byte) (string, error) {
+	re := regexp.MustCompile(pattern)
+	match := re.FindSubmatch(data)
+	if len(match) < 2 {
+		return "", fmt.Errorf("didn't find %s", name)
+	}
+	return string(match[1]), nil
+}
+
 func RegexpSearch(t *testing.T, itemName, pattern string, data []byte) string {
 	re := regexp.MustCompile(pattern)
 	match := re.FindSubmatch(data)
@@ -85,19 +94,19 @@ func FetchLocalImage(t *testing.T) string {
 		t.Fatalf("failed creating temp dir: %v", err)
 	}
 
-	err = DownloadFile(tmpDir, "coreos_production_image.bin.bz2")
+	err = DownloadFile(t, tmpDir, "coreos_production_image.bin.bz2")
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("failed downloading image: %v", err)
 	}
 
-	err = DownloadFile(tmpDir, "coreos_production_image.bin.bz2.sig")
+	err = DownloadFile(t, tmpDir, "coreos_production_image.bin.bz2.sig")
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("failed downloading signature: %v", err)
 	}
 
-	err = DownloadFile(tmpDir, "version.txt")
+	err = DownloadFile(t, tmpDir, "version.txt")
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("failed downloading version: %v", err)
@@ -106,14 +115,43 @@ func FetchLocalImage(t *testing.T) string {
 	return tmpDir
 }
 
-func DownloadFile(tmpDir, name string) error {
+// Used to get defaults for channel, board, & version, first checks if the
+// host machine is Container Linux and if so uses the data from the machine
+// otherwise defaults to stable, amd64-usr, & current respectively
+func GetDefaultChannelBoardVersion(t *testing.T) (string, string, string) {
+	data, err := ioutil.ReadFile("/usr/lib/os-release")
+	if err != nil {
+		return "stable", "amd64-usr", "current"
+	}
+
+	os, err := TryRegexpSearch("id", "ID=['\"]?([A-Za-z0-9 \\._\\-]*)['\"]?", data)
+	if err != nil || os != "coreos" {
+		return "stable", "amd64-usr", "current"
+	}
+
+	version := RegexpSearch(t, "version", "VERSION_ID=['\"]?([A-Za-z0-9 \\._\\-]*)['\"]?", data)
+	board := RegexpSearch(t, "board", "COREOS_BOARD=['\"]?([A-Za-z0-9 \\._\\-]*)['\"]?", data)
+
+	data, err = ioutil.ReadFile("/etc/coreos/update.conf")
+	if err != nil {
+		t.Fatalf("reading /etc/coreos/update.conf: %v", err)
+	}
+
+	channel := RegexpSearch(t, "channel", "GROUP=['\"]?([A-Za-z0-9 \\._\\-]*)['\"]?", data)
+
+	return channel, board, version
+}
+
+func DownloadFile(t *testing.T, tmpDir, name string) error {
 	file, err := os.Create(filepath.Join(tmpDir, name))
 	if err != nil {
 		return fmt.Errorf("failed to create file: %v", err)
 	}
 	defer file.Close()
 
-	resp, err := http.Get(fmt.Sprintf("https://stable.release.core-os.net/amd64-usr/current/%s", name))
+	channel, board, version := GetDefaultChannelBoardVersion(t)
+
+	resp, err := http.Get(fmt.Sprintf("https://%s.release.core-os.net/%s/%s/%s", channel, board, version, name))
 	if err != nil {
 		return fmt.Errorf("failed to download file: %v", err)
 	}
